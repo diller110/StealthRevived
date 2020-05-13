@@ -39,6 +39,7 @@ public SharedPlugin __pl_stealthrevived =
 #if !defined REQUIRE_PLUGIN
 public void __pl_stealthrevived_SetNTVOptional() {
 	MarkNativeAsOptional("SR_IsClientStealthed");
+	MarkNativeAsOptional("SR_SetClientStealth");
 }
 #endif
 
@@ -48,3 +49,15 @@ public void __pl_stealthrevived_SetNTVOptional() {
  * @return		True if a client is stealthed. False otherwise.
  */
 native bool SR_IsClientStealthed(int iClient);
+
+/**
+ * Set client stealth status.
+ *
+ * @param {int} iClient - client
+ * @param {bool} bValue - stealth state
+ * @param {bool} [bChangeTeam=true] - force change team to spectators
+ * @return {void}
+ */
+native bool SR_SetClientStealth(int iClient, bool bValue, bool bChangeTeam = true);
+
+forward void SR_OnClientStealth(int iClient, bool bValue);

@@ -61,6 +61,7 @@
 #include <sdkhooks>
 #include <regex>
 #include <autoexecconfig>
+#include <cstrike>
 
 #undef REQUIRE_EXTENSIONS
 #tryinclude <ptah>
@@ -69,7 +70,7 @@
 /****************************************************************************************************
 	DEFINES
 *****************************************************************************************************/
-#define PL_VERSION "1.0.1"
+#define PL_VERSION "1.1.0"
 #define LoopValidPlayers(%1) for(int %1 = 1; %1 <= MaxClients; %1++) if(IsValidClient(%1))
 #define LoopValidClients(%1) for(int %1 = 1; %1 <= MaxClients; %1++) if(IsValidClient(%1, false))
 
@@ -99,6 +100,8 @@ ConVar g_cvHostIP = null;
 ConVar g_cvTags = null;
 ConVar g_cvCustomStatus = null;
 ConVar g_cvSetTransmit = null;
+ConVar g_cvAutoStealth = null;
+GlobalForward Fwd_OnClientStealth = null;
 
 /****************************************************************************************************
 	BOOLS.
@@ -108,6 +111,7 @@ bool g_bWindows = false;
 bool g_bRewriteStatus = false;
 bool g_bDataCached = false;
 bool g_bSetTransmit = true;
+bool g_bAutoStealth = false;
 bool g_bPTaH = false;
 
 /****************************************************************************************************
@@ -141,6 +145,9 @@ public void OnPluginStart() {
 	
 	g_cvSetTransmit = AutoExecConfig_CreateConVar("sm_stealthrevived_hidecheats", "1", "Should the plugin prevent cheats with 'spectator list' working? (This option may cause performance issues on some servers)", _, true, 0.0, true, 1.0);
 	g_cvSetTransmit.AddChangeHook(OnCvarChanged);
+	
+	g_cvAutoStealth = AutoExecConfig_CreateConVar("sm_stealthrevived_autostealth", "0", "Should the player enable stealth on spectate?", _, true, 0.0, true, 1.0);
+	g_cvAutoStealth.AddChangeHook(OnCvarChanged);
 	
 	AutoExecConfig_CleanFile(); AutoExecConfig_ExecuteFile();
 	
@@ -179,7 +186,11 @@ public void OnPluginStart() {
 
 public APLRes AskPluginLoad2(Handle myself, bool late, char[] eror, int err_max) {
 	RegPluginLibrary("StealthRevived");
+	
+	Fwd_OnClientStealth = CreateGlobalForward("SR_OnClientStealth", ET_Ignore, Param_Cell, Param_Cell);
+	
 	CreateNative("SR_IsClientStealthed", Native_IsClientStealthed);
+	CreateNative("SR_SetClientStealth", Native_SetClientStealth);
 	return APLRes_Success;
 }
 
@@ -200,6 +211,8 @@ public void OnCvarChanged(ConVar conVar, const char[] oldValue, const char[] new
 				SDKHook(client, SDKHook_SetTransmit, Hook_SetTransmit);
 			}
 		}
+	} else if(conVar == g_cvAutoStealth) {
+		g_bAutoStealth = view_as<bool>(StringToInt(newValue));
 	}
 }
 
@@ -208,7 +221,8 @@ public void OnConfigsExecuted() {
 	g_cvTags.GetString(g_sTags, sizeof(g_sTags));
 	g_bSetTransmit = g_cvSetTransmit.BoolValue;
 	
-	LoopValidPlayers(client) {
+
+	if(g_bAutoStealth) LoopValidPlayers(client) {
 		if (!CanGoStealth(client) || GetClientTeam(client) > 1) {
 			continue;
 		}
@@ -218,6 +232,7 @@ public void OnConfigsExecuted() {
 		}
 		
 		g_bStealthed[client] = true;
+		Forward_OnClientStealth(client);
 	}
 }
 
@@ -283,8 +298,11 @@ public Action Event_PlayerTeam_Pre(Event event, char[] eventName, bool dontBroad
 		}
 		
 		g_bStealthed[client] = false;
+		Forward_OnClientStealth(client);
 		return Plugin_Continue;
 	}
+	
+	if (!g_bAutoStealth) return Plugin_Continue;
 	
 	if (CanGoStealth(client)) {
 		g_bStealthed[client] = true;
@@ -293,6 +311,7 @@ public Action Event_PlayerTeam_Pre(Event event, char[] eventName, bool dontBroad
 		if (g_bSetTransmit) {
 			SDKHook(client, SDKHook_SetTransmit, Hook_SetTransmit);
 		}
+		Forward_OnClientStealth(client);
 	}
 	
 	return Plugin_Continue;
@@ -688,7 +707,29 @@ stock void FormatShortTime(int time, char[] sOut, int iSize) {
 	}
 }
 
+stock void Forward_OnClientStealth(int client) {
+	Call_StartForward(Fwd_OnClientStealth);
+	Call_PushCell(client);
+	Call_PushCell(g_bStealthed[client]);
+	Call_Finish();
+}
+
 public int Native_IsClientStealthed(Handle plugin, int numParams) {
 	int client = GetNativeCell(1);
 	return g_bStealthed[client];
-} 
+}
+
+public int Native_SetClientStealth(Handle plugin, int numParams) {
+	int client = GetNativeCell(1);
+	g_bStealthed[client] = view_as<bool>(GetNativeCell(2));
+	if(g_bStealthed[client]) {
+		if (g_bSetTransmit) {
+			SDKHook(client, SDKHook_SetTransmit, Hook_SetTransmit);
+		}
+	}
+	if(view_as<bool>(GetNativeCell(3))) {
+		ChangeClientTeam(client, CS_TEAM_SPECTATOR);
+	}
+	
+	Forward_OnClientStealth(client);
+}
